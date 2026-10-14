@@ -3,14 +3,11 @@ import socketserver
 import sqlite3
 import urllib.parse
 import os
-import sys
 
-# Определяем тип базы данных: на Render берем облачный PostgreSQL, на Макбуке - локальный SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = DATABASE_URL is not None
 
 if IS_POSTGRES:
-    # Для работы с PostgreSQL на Render автоматически ставим и импортируем psycopg2
     try:
         import psycopg2
         import psycopg2.extras
@@ -32,58 +29,88 @@ def get_db_connection():
 
 def init_db():
     conn, c = get_db_connection()
-    # Таблица пользователей для личных кабинетов
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY if postgres else INTEGER PRIMARY KEY AUTOINCREMENT, 
-            username TEXT UNIQUE, 
-            password TEXT
-        )
-    """.replace("SERIAL PRIMARY KEY if postgres else ", "SERIAL PRIMARY KEY " if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT "))
-    
-    # Добавляем привязку user_id к объектам
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS clients (
-            id SERIAL PRIMARY KEY if postgres else INTEGER PRIMARY KEY AUTOINCREMENT, 
-            user_id INTEGER,
-            name TEXT, 
-            phone TEXT, 
-            address TEXT
-        )
-    """.replace("SERIAL PRIMARY KEY if postgres else ", "SERIAL PRIMARY KEY " if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT "))
-    
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id SERIAL PRIMARY KEY if postgres else INTEGER PRIMARY KEY AUTOINCREMENT, 
-            client_id INTEGER, 
-            description TEXT, 
-            status TEXT
-        )
-    """.replace("SERIAL PRIMARY KEY if postgres else ", "SERIAL PRIMARY KEY " if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT "))
-    
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS materials (
-            id SERIAL PRIMARY KEY if postgres else INTEGER PRIMARY KEY AUTOINCREMENT, 
-            order_id INTEGER, 
-            name TEXT, 
-            quantity REAL, 
-            price REAL
-        )
-    """.replace("SERIAL PRIMARY KEY if postgres else ", "SERIAL PRIMARY KEY " if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT "))
+    if IS_POSTGRES:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY, 
+                username TEXT UNIQUE, 
+                password TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS clients (
+                id SERIAL PRIMARY KEY, 
+                user_id INTEGER,
+                name TEXT, 
+                phone TEXT, 
+                address TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY, 
+                client_id INTEGER, 
+                description TEXT, 
+                status TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS materials (
+                id SERIAL PRIMARY KEY, 
+                order_id INTEGER, 
+                name TEXT, 
+                quantity REAL, 
+                price REAL
+            )
+        """)
+    else:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                username TEXT UNIQUE, 
+                password TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                user_id INTEGER,
+                name TEXT, 
+                phone TEXT, 
+                address TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                client_id INTEGER, 
+                description TEXT, 
+                status TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS materials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                order_id INTEGER, 
+                name TEXT, 
+                quantity REAL, 
+                price REAL
+            )
+        """)
     conn.commit()
     conn.close()
 
-# Инициализируем базу данных
 init_db()
 
 class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
     
     def get_user_from_cookie(self):
-        # Простая и надежная авторизация через сессионные куки
         cookie_header = self.headers.get('Cookie', '')
         if 'user_id=' in cookie_header:
             try:
-                return int(cookie_header.split('user_id=')[1].split(';')[0])
+                parts = cookie_header.split('user_id=')
+                if len(parts) > 1:
+                    return int(parts[1].split(';')[0])
             except:
                 return None
         return None
@@ -99,10 +126,10 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         </style></head><body><div class='auth-card'>
         <h2 style='text-align:center;margin-top:0;'>Мастер-Учёт 🛠️</h2>
         {err_html}
-        <form action='/login' method='POST'>
+        <form method='POST'>
         <input type='text' name='username' placeholder='Логин' required>
         <input type='password' name='password' placeholder='Пароль' required>
-        <button type='submit' class='btn'>Войти в кабинет</button>
+        <button type='submit' formaction='/login' class='btn'>Войти в кабинет</button>
         <button type='submit' formaction='/register' class='btn btn-reg'>Создать новый аккаунт</button>
         </form></div></body></html>"""
         self.send_response(200)
@@ -124,11 +151,15 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 self.render_login_page("Заполните все поля")
                 return
             conn, c = get_db_connection()
-            user = c.execute("SELECT id, password FROM users WHERE username = ?", (username,)).fetchone() if not IS_POSTGRES else c.execute("SELECT id, password FROM users WHERE username = %s", (username,)) or c.fetchone()
+            if IS_POSTGRES:
+                c.execute("SELECT id, password FROM users WHERE username = %s", (username,))
+            else:
+                c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
+            user = c.fetchone()
             conn.close()
-            if user and user[1] == password:
+            if user and user['password'] == password:
                 self.send_response(303)
-                self.send_header("Set-Cookie", f"user_id={user[0]}; Path=/; HttpOnly")
+                self.send_header("Set-Cookie", f"user_id={user['id']}; Path=/; HttpOnly")
                 self.send_header("Location", "/")
                 self.end_headers()
             else:
@@ -142,7 +173,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 if IS_POSTGRES:
                     c.execute("INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id", (username, password))
-                    uid = c.fetchone()[0]
+                    uid = c.fetchone()['id']
                 else:
                     c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
                     uid = c.lastrowid
@@ -152,28 +183,28 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Set-Cookie", f"user_id={uid}; Path=/; HttpOnly")
                 self.send_header("Location", "/")
                 self.end_headers()
-            except:
-                conn.close()
+            except Exception as e:
+                try: conn.close()
+                except: pass
                 self.render_login_page("Такой логин уже занят")
 
     def do_GET(self):
         url = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(url.query)
         user_id = self.get_user_from_cookie()
         
-        # Если пользователь не вошел, показываем только авторизацию
-        if url.path in ["/login", "/register"] or not user_id:
-            if url.path == "/logout":
-                self.send_response(303)
-                self.send_header("Set-Cookie", "user_id=; Path=/; Max-Age=0")
-                self.send_header("Location", "/")
-                self.end_headers()
-                return
+        if url.path == "/logout":
+            self.send_response(303)
+            self.send_header("Set-Cookie", "user_id=; Path=/; Max-Age=0")
+            self.send_header("Location", "/")
+            self.end_headers()
+            return
+
+        if not user_id:
             self.render_login_page()
             return
 
         if url.path in ["/", "/index.html"]:
             conn, c = get_db_connection()
-            # Показываем объекты ТОЛЬКО текущего вошедшего пользователя
             if IS_POSTGRES:
                 c.execute("SELECT id, name, phone, address FROM clients WHERE user_id = %s", (user_id,))
             else:
@@ -185,5 +216,3 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             for row in clients:
                 html += f"<div class='card'><a href='/delete_client?id={row['id']}' class='btn-del' onclick='return confirm(\"Удалить?\")'>❌</a><b>👤 {row['name']}</b><p>📞 {row['phone']}<br>📍 {row['address']}</p><a href='/estimate?client_id={row['id']}' class='btn btn-dark'>Открыть смету</a></div>"
             html += "<a href='/logout' class='logout'>Выйти из аккаунта</a></div></body></html>"
-            self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
-            
