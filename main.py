@@ -4,99 +4,48 @@ import sqlite3
 import urllib.parse
 import os
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-IS_POSTGRES = DATABASE_URL is not None
-
-if IS_POSTGRES:
-    try:
-        import psycopg2
-        import psycopg2.extras
-    except ImportError:
-        os.system("pip install psycopg2-binary")
-        import psycopg2
-        import psycopg2.extras
-else:
-    DATABASE_URL = "master.db"
+DATABASE_URL = "master.db"
 
 def get_db_connection():
-    if IS_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-    else:
-        conn = sqlite3.connect(DATABASE_URL)
-        conn.row_factory = sqlite3.Row
-        return conn, conn.cursor()
+    conn = sqlite3.connect(DATABASE_URL)
+    conn.row_factory = sqlite3.Row
+    return conn, conn.cursor()
 
 def init_db():
     conn, c = get_db_connection()
-    if IS_POSTGRES:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY, 
-                username TEXT UNIQUE, 
-                password TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS clients (
-                id SERIAL PRIMARY KEY, 
-                user_id INTEGER,
-                name TEXT, 
-                phone TEXT, 
-                address TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id SERIAL PRIMARY KEY, 
-                client_id INTEGER, 
-                description TEXT, 
-                status TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS materials (
-                id SERIAL PRIMARY KEY, 
-                order_id INTEGER, 
-                name TEXT, 
-                quantity REAL, 
-                price REAL
-            )
-        """)
-    else:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                username TEXT UNIQUE, 
-                password TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS clients (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                user_id INTEGER,
-                name TEXT, 
-                phone TEXT, 
-                address TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                client_id INTEGER, 
-                description TEXT, 
-                status TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS materials (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                order_id INTEGER, 
-                name TEXT, 
-                quantity REAL, 
-                price REAL
-            )
-        """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            username TEXT UNIQUE, 
+            password TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            user_id INTEGER,
+            name TEXT, 
+            phone TEXT, 
+            address TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            client_id INTEGER, 
+            description TEXT, 
+            status TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS materials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            order_id INTEGER, 
+            name TEXT, 
+            quantity REAL, 
+            price REAL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -108,9 +57,11 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         cookie_header = self.headers.get('Cookie', '')
         if 'user_id=' in cookie_header:
             try:
+                # Извлекаем ID пользователя из куки без использования split на списках
                 parts = cookie_header.split('user_id=')
                 if len(parts) > 1:
-                    return int(parts[1].split(';')[0])
+                    sub_part = parts[1].split(';')[0]
+                    return int(sub_part.strip())
             except:
                 return None
         return None
@@ -143,18 +94,15 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         post_data = self.rfile.read(content_length).decode('utf-8')
         params = urllib.parse.parse_qs(post_data)
         
-        username = params.get("username", [""])[0].strip()
-        password = params.get("password", [""])[0].strip()
+        username = params.get("username", [""]).strip()
+        password = params.get("password", [""]).strip()
         
         if url.path == "/login":
             if not username or not password:
                 self.render_login_page("Заполните все поля")
                 return
             conn, c = get_db_connection()
-            if IS_POSTGRES:
-                c.execute("SELECT id, password FROM users WHERE username = %s", (username,))
-            else:
-                c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
+            c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
             user = c.fetchone()
             conn.close()
             if user and user['password'] == password:
@@ -171,12 +119,8 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 return
             conn, c = get_db_connection()
             try:
-                if IS_POSTGRES:
-                    c.execute("INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id", (username, password))
-                    uid = c.fetchone()['id']
-                else:
-                    c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
-                    uid = c.lastrowid
+                c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+                uid = c.lastrowid
                 conn.commit()
                 conn.close()
                 self.send_response(303)
@@ -205,10 +149,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
 
         if url.path in ["/", "/index.html"]:
             conn, c = get_db_connection()
-            if IS_POSTGRES:
-                c.execute("SELECT id, name, phone, address FROM clients WHERE user_id = %s", (user_id,))
-            else:
-                c.execute("SELECT id, name, phone, address FROM clients WHERE user_id = ?", (user_id,))
+            c.execute("SELECT id, name, phone, address FROM clients WHERE user_id = ?", (user_id,))
             clients = c.fetchall()
             conn.close()
             
@@ -216,3 +157,34 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             for row in clients:
                 html += f"<div class='card'><a href='/delete_client?id={row['id']}' class='btn-del' onclick='return confirm(\"Удалить?\")'>❌</a><b>👤 {row['name']}</b><p>📞 {row['phone']}<br>📍 {row['address']}</p><a href='/estimate?client_id={row['id']}' class='btn btn-dark'>Открыть смету</a></div>"
             html += "<a href='/logout' class='logout'>Выйти из аккаунта</a></div></body></html>"
+            self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
+            
+        elif url.path == "/estimate":
+            cid = q.get("client_id")[0]; conn, c_db = get_db_connection()
+            c_db.execute("SELECT id, name, phone, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
+            c = c_db.fetchone()
+            if not c:
+                conn.close(); self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
+                
+            c_db.execute("SELECT id, status FROM orders WHERE client_id = ?", (cid,))
+            o = c_db.fetchone()
+            
+            if not o:
+                c_db.execute("INSERT INTO orders (client_id, description, status) VALUES (?, 'Заказ', 'Новая')", (cid,))
+                conn.commit()
+                c_db.execute("SELECT id, status FROM orders WHERE client_id = ?", (cid,))
+                o = c_db.fetchone()
+                
+            c_db.execute("SELECT id, name, quantity, price FROM materials WHERE order_id = ?", (o['id'],))
+            mats = c_db.fetchall()
+            conn.close()
+            
+            tot = sum(m['quantity']*m['price'] for m in mats)
+            m_html = "".join([f"<div style='background:#F5F5F7;padding:10px;border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;'><div><b>{m['name']}</b><br><small>{m['quantity']} × {m['price']} р.</small></div><b>{m['quantity']*m['price']:.2f} р. <a href='/delete_material?id={m['id']}&client_id={cid}'>❌</a></b></div>" for m in mats])
+            sts = ["Новая", "В работе", "Готово", "Оплачено"]
+            opts = "".join([f"<option value='{s}' {'selected' if o['status']==s else ''}>{s}</option>" for s in sts])
+            
+            clean_phone = "".join(filter(str.isdigit, str(c['phone'] if c['phone'] else '')))
+            if clean_phone.startswith("8"):
+                clean_phone = "7" + clean_phone[1:]
+            
