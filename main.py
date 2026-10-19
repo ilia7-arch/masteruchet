@@ -57,11 +57,10 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         cookie_header = self.headers.get('Cookie', '')
         if 'user_id=' in cookie_header:
             try:
-                # Извлекаем ID пользователя из куки без использования split на списках
-                parts = cookie_header.split('user_id=')
-                if len(parts) > 1:
-                    sub_part = parts[1].split(';')[0]
-                    return int(sub_part.strip())
+                # Безопасный разбор куки без опечаток и split на списках
+                for item in cookie_header.split(';'):
+                    if 'user_id=' in item:
+                        return int(item.split('=')[1].strip())
             except:
                 return None
         return None
@@ -160,7 +159,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
             
         elif url.path == "/estimate":
-            cid = q.get("client_id")[0]; conn, c_db = get_db_connection()
+            cid = q.get("client_id"); conn, c_db = get_db_connection()
             c_db.execute("SELECT id, name, phone, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
             c = c_db.fetchone()
             if not c:
