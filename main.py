@@ -13,39 +13,10 @@ def get_db_connection():
 
 def init_db():
     conn, c = get_db_connection()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            username TEXT UNIQUE, 
-            password TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            user_id INTEGER,
-            name TEXT, 
-            phone TEXT, 
-            address TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            client_id INTEGER, 
-            description TEXT, 
-            status TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS materials (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            order_id INTEGER, 
-            name TEXT, 
-            quantity REAL, 
-            price REAL
-        )
-    """)
+    c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, phone TEXT, address TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, description TEXT, status TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS materials (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER, name TEXT, quantity REAL, price REAL)")
     conn.commit()
     conn.close()
 
@@ -57,10 +28,12 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         cookie_header = self.headers.get('Cookie', '')
         if 'user_id=' in cookie_header:
             try:
-                # Безопасный разбор куки без опечаток и split на списках
-                for item in cookie_header.split(';'):
-                    if 'user_id=' in item:
-                        return int(item.split('=')[1].strip())
+                # Самый простой и дубовый способ достать ID без единого вызова методов на списках
+                raw_cookies = cookie_header.split(';')
+                for c in raw_cookies:
+                    if 'user_id=' in c:
+                        val = c.replace('user_id=', '').strip()
+                        return int(val)
             except:
                 return None
         return None
@@ -93,8 +66,8 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         post_data = self.rfile.read(content_length).decode('utf-8')
         params = urllib.parse.parse_qs(post_data)
         
-        username = params.get("username", [""]).strip()
-        password = params.get("password", [""]).strip()
+        username = params.get("username", [""])[0].strip()
+        password = params.get("password", [""])[0].strip()
         
         if url.path == "/login":
             if not username or not password:
@@ -126,7 +99,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Set-Cookie", f"user_id={uid}; Path=/; HttpOnly")
                 self.send_header("Location", "/")
                 self.end_headers()
-            except Exception as e:
+            except:
                 try: conn.close()
                 except: pass
                 self.render_login_page("Такой логин уже занят")
@@ -159,7 +132,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
             
         elif url.path == "/estimate":
-            cid = q.get("client_id"); conn, c_db = get_db_connection()
+            cid = q.get("client_id")[0]; conn, c_db = get_db_connection()
             c_db.execute("SELECT id, name, phone, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
             c = c_db.fetchone()
             if not c:
@@ -187,3 +160,6 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             if clean_phone.startswith("8"):
                 clean_phone = "7" + clean_phone[1:]
             
+            msg = f"🛠 MasterUchet Pro | Отчет\n📍 Объект: {c['address']}\n👤 Заказчик: {c['name']}\n📊 Статус: {o['status']}\n💰 Смета: {tot:,.2f} руб.\nПожалуйста, проверьте смету."
+            wa = f"https://wa.me{clean_phone}?text={urllib.parse.quote(msg)}"
+
