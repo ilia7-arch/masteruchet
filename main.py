@@ -27,16 +27,13 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
     def get_user_from_cookie(self):
         try:
             cookie_header = self.headers.get('Cookie', '')
-            if not cookie_header or 'user_id=' not in cookie_header:
-                return None
-            
-            # Максимально безопасный построчный разбор куки
-            for item in cookie_header.split(';'):
-                item = item.strip()
-                if item.startswith('user_id='):
-                    val = item.split('=', 1)[1].strip()
-                    if val.isdigit():
-                        return int(val)
+            if 'user_id=' in cookie_header:
+                for item in cookie_header.split(';'):
+                    item = item.strip()
+                    if item.startswith('user_id='):
+                        val = item.replace('user_id=', '').strip()
+                        if val.isdigit():
+                            return int(val)
         except:
             pass
         return None
@@ -75,8 +72,11 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             return
         
-        username = params.get("username", [""])[0].strip()
-        password = params.get("password", [""])[0].strip()
+        # Исправлено: безопасное извлечение строк без ошибок
+        username_list = params.get("username", [""])
+        password_list = params.get("password", [""])
+        username = username_list[0].strip() if username_list else ""
+        password = password_list[0].strip() if password_list else ""
         
         if url.path == "/login":
             if not username or not password:
@@ -171,5 +171,3 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             tot = sum(m['quantity']*m['price'] for m in mats)
             m_html = "".join([f"<div style='background:#F5F5F7;padding:10px;border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;'><div><b>{m['name']}</b><br><small>{m['quantity']} × {m['price']} р.</small></div><b>{m['quantity']*m['price']:.2f} р. <a href='/delete_material?id={m['id']}&client_id={cid}'>❌</a></b></div>" for m in mats])
             sts = ["Новая", "В работе", "Готово", "Оплачено"]
-            opts = "".join([f"<option value='{s}' {'selected' if o['status']==s else ''}>{s}</option>" for s in sts])
-            
