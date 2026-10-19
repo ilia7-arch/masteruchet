@@ -25,17 +25,20 @@ init_db()
 class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
     
     def get_user_from_cookie(self):
-        cookie_header = self.headers.get('Cookie', '')
-        if 'user_id=' in cookie_header:
-            try:
-                # Самый простой и дубовый способ достать ID без единого вызова методов на списках
-                raw_cookies = cookie_header.split(';')
-                for c in raw_cookies:
-                    if 'user_id=' in c:
-                        val = c.replace('user_id=', '').strip()
-                        return int(val)
-            except:
+        try:
+            cookie_header = self.headers.get('Cookie', '')
+            if not cookie_header or 'user_id=' not in cookie_header:
                 return None
+            
+            # Максимально безопасный построчный разбор куки
+            for item in cookie_header.split(';'):
+                item = item.strip()
+                if item.startswith('user_id='):
+                    val = item.split('=', 1)[1].strip()
+                    if val.isdigit():
+                        return int(val)
+        except:
+            pass
         return None
 
     def render_login_page(self, error=""):
@@ -62,9 +65,15 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlparse(self.path)
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length).decode('utf-8')
-        params = urllib.parse.parse_qs(post_data)
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else ""
+            params = urllib.parse.parse_qs(post_data)
+        except:
+            self.send_response(303)
+            self.send_header("Location", "/")
+            self.end_headers()
+            return
         
         username = params.get("username", [""])[0].strip()
         password = params.get("password", [""])[0].strip()
@@ -105,7 +114,8 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 self.render_login_page("Такой логин уже занят")
 
     def do_GET(self):
-        url = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(url.query)
+        url = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(url.query)
         user_id = self.get_user_from_cookie()
         
         if url.path == "/logout":
@@ -132,7 +142,14 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
             
         elif url.path == "/estimate":
-            cid = q.get("client_id")[0]; conn, c_db = get_db_connection()
+            try:
+                cid_list = q.get("client_id", [None])
+                cid = cid_list[0] if cid_list else None
+                if not cid: raise ValueError
+            except:
+                self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
+
+            conn, c_db = get_db_connection()
             c_db.execute("SELECT id, name, phone, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
             c = c_db.fetchone()
             if not c:
@@ -156,10 +173,3 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             sts = ["Новая", "В работе", "Готово", "Оплачено"]
             opts = "".join([f"<option value='{s}' {'selected' if o['status']==s else ''}>{s}</option>" for s in sts])
             
-            clean_phone = "".join(filter(str.isdigit, str(c['phone'] if c['phone'] else '')))
-            if clean_phone.startswith("8"):
-                clean_phone = "7" + clean_phone[1:]
-            
-            msg = f"🛠 MasterUchet Pro | Отчет\n📍 Объект: {c['address']}\n👤 Заказчик: {c['name']}\n📊 Статус: {o['status']}\n💰 Смета: {tot:,.2f} руб.\nПожалуйста, проверьте смету."
-            wa = f"https://wa.me{clean_phone}?text={urllib.parse.quote(msg)}"
-
