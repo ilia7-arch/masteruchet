@@ -176,4 +176,8 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
 
             c.execute("SELECT id FROM orders WHERE client_id = %s", (cid,))
             order = c.fetchone()
-            if not order:
+            import os
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
