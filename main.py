@@ -6,6 +6,7 @@ import os
 import psycopg2
 from psycopg2.extras import DictCursor
 
+# Жестко прописываем глобальный URL базы данных, чтобы не зависеть от настроек Render
 DATABASE_URL = "postgresql://masteruchet_db_user:fLBcxcwFr5LohplltvDfpYlCZiRuSw3f@://render.com"
 
 def get_db_connection():
@@ -176,5 +177,3 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             c.execute("SELECT id FROM orders WHERE client_id = %s", (cid,))
             order = c.fetchone()
             if not order:
-                c.execute("INSERT INTO orders (client_id, status) VALUES (%s, 'Новый') RETURNING id", (cid,))
-                conn.commit()
