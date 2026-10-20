@@ -6,7 +6,7 @@ import psycopg2
 from psycopg2.extras import DictCursor
 
 # Берем URL базы данных из настроек Render. Если запускаем локально - упадет с понятной ошибкой.
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = "postgresql://masteruchet_db_user:fLBcxcwFr5LohplltvDfpYlCZiRuSw3f@://render.com"
 
 def get_db_connection():
     # Подключение к PostgreSQL
