@@ -1,26 +1,35 @@
 import http.server
 import socketserver
-import sqlite3
 import urllib.parse
 import os
+import psycopg2
+from psycopg2.extras import DictCursor
 
-DATABASE_URL = "master.db"
+# Берем URL базы данных из настроек Render. Если запускаем локально - упадет с понятной ошибкой.
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
-    conn = sqlite3.connect(DATABASE_URL)
-    conn.row_factory = sqlite3.Row
+    # Подключение к PostgreSQL
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
     return conn, conn.cursor()
 
 def init_db():
+    if not DATABASE_URL:
+        print("ОШИБКА: Переменная окружения DATABASE_URL не задана!")
+        return
     conn, c = get_db_connection()
-    c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, phone TEXT, address TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, description TEXT, status TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS materials (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER, name TEXT, quantity REAL, price REAL)")
+    # Создаем таблицы с синтаксисом PostgreSQL (используем SERIAL вместо AUTOINCREMENT)
+    c.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, phone TEXT, address TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, client_id INTEGER, description TEXT, status TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, order_id INTEGER, name TEXT, quantity REAL, price REAL)")
     conn.commit()
     conn.close()
+    print("База данных успешно инициализирована.")
 
-init_db()
+# Инициализируем базу данных при старте
+if DATABASE_URL:
+    init_db()
 
 class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
     
@@ -77,7 +86,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 self.render_login_page("Заполните все поля")
                 return
             conn, c = get_db_connection()
-            c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
+            c.execute("SELECT id, password FROM users WHERE username = %s", (username,))
             user = c.fetchone()
             conn.close()
             if user and user['password'] == password:
@@ -94,8 +103,8 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 return
             conn, c = get_db_connection()
             try:
-                c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
-                uid = c.lastrowid
+                c.execute("INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id", (username, password))
+                uid = c.fetchone()['id']
                 conn.commit()
                 conn.close()
                 self.send_response(303)
@@ -125,13 +134,13 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
 
         if url.path in ["/", "/index.html"]:
             conn, c = get_db_connection()
-            c.execute("SELECT id, name, phone, address FROM clients WHERE user_id = ?", (user_id,))
+            c.execute("SELECT id, name, phone, address FROM clients WHERE user_id = %s", (user_id,))
             clients = c.fetchall()
             conn.close()
             
             html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:-apple-system;background:#F5F5F7;padding:20px;} .card{background:white;padding:15px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:12px;} .btn{background:#0071E3;color:white;padding:10px;border-radius:8px;display:block;text-align:center;text-decoration:none;font-weight:bold;margin-top:10px;} .btn-dark{background:#212529;} .btn-del{color:#E30613;text-decoration:none;float:right;} .logout{text-align:center;margin-top:20px;display:block;color:#86868B;text-decoration:none;font-size:14px;}</style></head><body><div style='max-width:360px;margin:0 auto;'><h2>Мастер-Учёт 🛠️</h2><form action='/add_client' style='background:white;padding:15px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;'><h3>Добавить объект</h3><input type='text' name='name' placeholder='ФИО' style='width:100%;padding:8px;margin:5px 0;' required><br><input type='text' name='phone' placeholder='Телефон' style='width:100%;padding:8px;margin:5px 0;'><br><textarea name='address' placeholder='Адрес' style='width:100%;padding:8px;margin:5px 0;'></textarea><br><button type='submit' style='width:100%;background:#0071E3;color:white;padding:10px;border:none;border-radius:8px;font-weight:bold;'>Добавить объект</button></form><h3>Активные объекты</h3>"
             for row in clients:
-                html += f"<div class='card'><a href='/delete_client?id={row['id']}' class='btn-del' onclick='return confirm(\"Удалить объект и все его данные?\")'>❌</a><b>👤 {row['name']}</b><p>📞 {row['phone']}<br>📍 {row['address']}</p><a href='/estimate?client_id={row['id']}' class='btn btn-dark'>Открыть смету</a></div>"
+                html += f"<div class='card'><a href='/delete_client?id={row['id']}' class='btn-del' onclick='return confirm(\"Удалить объект?\")'>❌</a><b>👤 {row['name']}</b><p>📞 {row['phone']}<br>📍 {row['address']}</p><a href='/estimate?client_id={row['id']}' class='btn btn-dark'>Открыть смету</a></div>"
             html += "<a href='/logout' class='logout'>Выйти из аккаунта</a></div></body></html>"
             
             self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
@@ -142,7 +151,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             address = q.get("address", [""])[0].strip()
             if name:
                 conn, c = get_db_connection()
-                c.execute("INSERT INTO clients (user_id, name, phone, address) VALUES (?, ?, ?, ?)", (user_id, name, phone, address))
+                c.execute("INSERT INTO clients (user_id, name, phone, address) VALUES (%s, %s, %s, %s)", (user_id, name, phone, address))
                 conn.commit()
                 conn.close()
             self.send_response(303); self.send_header("Location", "/"); self.end_headers()
@@ -151,8 +160,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             cid = q.get("id", [""])[0]
             if cid:
                 conn, c = get_db_connection()
-                # Проверка прав собственности перед удалением
-                c.execute("DELETE FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
+                c.execute("DELETE FROM clients WHERE id = %s AND user_id = %s", (int(cid), user_id))
                 conn.commit()
                 conn.close()
             self.send_response(303); self.send_header("Location", "/"); self.end_headers()
@@ -166,14 +174,9 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
 
             conn, c = get_db_connection()
-            # Проверяем, принадлежит ли клиент текущему авторизованному мастеру
-            c.execute("SELECT id, name, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
+            c.execute("SELECT id, name, address FROM clients WHERE id = %s AND user_id = %s", (cid, user_id))
             client = c.fetchone()
             if not client:
                 conn.close()
                 self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
 
-            # Получаем или создаем связанный заказ (order) для хранения материалов
-            c.execute("SELECT id FROM orders WHERE client_id = ?", (cid,))
-            order = c.fetchone()
-            if not order:
