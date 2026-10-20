@@ -5,31 +5,24 @@ import os
 import psycopg2
 from psycopg2.extras import DictCursor
 
-# Берем URL базы данных из настроек Render. Если запускаем локально - упадет с понятной ошибкой.
+# Жестко прописываем глобальный URL базы данных, чтобы не зависеть от настроек Render
 DATABASE_URL = "postgresql://masteruchet_db_user:fLBcxcwFr5LohplltvDfpYlCZiRuSw3f@://render.com"
 
 def get_db_connection():
-    # Подключение к PostgreSQL
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
     return conn, conn.cursor()
 
 def init_db():
-    if not DATABASE_URL:
-        print("ОШИБКА: Переменная окружения DATABASE_URL не задана!")
-        return
     conn, c = get_db_connection()
-    # Создаем таблицы с синтаксисом PostgreSQL (используем SERIAL вместо AUTOINCREMENT)
     c.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, phone TEXT, address TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, client_id INTEGER, description TEXT, status TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, order_id INTEGER, name TEXT, quantity REAL, price REAL)")
     conn.commit()
     conn.close()
-    print("База данных успешно инициализирована.")
+    print("БАЗА ДАННЫХ УСПЕШНО ИНИЦИАЛИЗИРОВАНА!")
 
-# Инициализируем базу данных при старте
-if DATABASE_URL:
-    init_db()
+init_db()
 
 class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
     
@@ -78,8 +71,8 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
         except:
             self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
         
-        username = params.get("username", [""])[0].strip()
-        password = params.get("password", [""])[0].strip()
+        username = params.get("username", [""]).strip()
+        password = params.get("password", [""]).strip()
         
         if url.path == "/login":
             if not username or not password:
@@ -146,9 +139,9 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
             
         elif url.path == "/add_client":
-            name = q.get("name", [""])[0].strip()
-            phone = q.get("phone", [""])[0].strip()
-            address = q.get("address", [""])[0].strip()
+            name = q.get("name", [""]).strip()
+            phone = q.get("phone", [""]).strip()
+            address = q.get("address", [""]).strip()
             if name:
                 conn, c = get_db_connection()
                 c.execute("INSERT INTO clients (user_id, name, phone, address) VALUES (%s, %s, %s, %s)", (user_id, name, phone, address))
@@ -157,7 +150,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(303); self.send_header("Location", "/"); self.end_headers()
 
         elif url.path == "/delete_client":
-            cid = q.get("id", [""])[0]
+            cid = q.get("id", [""])
             if cid:
                 conn, c = get_db_connection()
                 c.execute("DELETE FROM clients WHERE id = %s AND user_id = %s", (int(cid), user_id))
@@ -167,7 +160,7 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
 
         elif url.path == "/estimate":
             try:
-                cid = q.get("client_id", [""])[0]
+                cid = q.get("client_id", [""])
                 if not cid: raise ValueError
                 cid = int(cid)
             except:
@@ -180,3 +173,6 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
                 self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
 
+            c.execute("SELECT id FROM orders WHERE client_id = %s", (cid,))
+            order = c.fetchone()
+            if not order:
