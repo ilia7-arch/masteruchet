@@ -67,16 +67,10 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             post_data = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else ""
             params = urllib.parse.parse_qs(post_data)
         except:
-            self.send_response(303)
-            self.send_header("Location", "/")
-            self.end_headers()
-            return
+            self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
         
-        # Исправлено: безопасное извлечение строк без ошибок
-        username_list = params.get("username", [""])
-        password_list = params.get("password", [""])
-        username = username_list[0].strip() if username_list else ""
-        password = password_list[0].strip() if password_list else ""
+        username = params.get("username", [""])[0].strip()
+        password = params.get("password", [""])[0].strip()
         
         if url.path == "/login":
             if not username or not password:
@@ -137,37 +131,49 @@ class MasterUchetHandler(http.server.SimpleHTTPRequestHandler):
             
             html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:-apple-system;background:#F5F5F7;padding:20px;} .card{background:white;padding:15px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:12px;} .btn{background:#0071E3;color:white;padding:10px;border-radius:8px;display:block;text-align:center;text-decoration:none;font-weight:bold;margin-top:10px;} .btn-dark{background:#212529;} .btn-del{color:#E30613;text-decoration:none;float:right;} .logout{text-align:center;margin-top:20px;display:block;color:#86868B;text-decoration:none;font-size:14px;}</style></head><body><div style='max-width:360px;margin:0 auto;'><h2>Мастер-Учёт 🛠️</h2><form action='/add_client' style='background:white;padding:15px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;'><h3>Добавить объект</h3><input type='text' name='name' placeholder='ФИО' style='width:100%;padding:8px;margin:5px 0;' required><br><input type='text' name='phone' placeholder='Телефон' style='width:100%;padding:8px;margin:5px 0;'><br><textarea name='address' placeholder='Адрес' style='width:100%;padding:8px;margin:5px 0;'></textarea><br><button type='submit' style='width:100%;background:#0071E3;color:white;padding:10px;border:none;border-radius:8px;font-weight:bold;'>Добавить объект</button></form><h3>Активные объекты</h3>"
             for row in clients:
-                html += f"<div class='card'><a href='/delete_client?id={row['id']}' class='btn-del' onclick='return confirm(\"Удалить?\")'>❌</a><b>👤 {row['name']}</b><p>📞 {row['phone']}<br>📍 {row['address']}</p><a href='/estimate?client_id={row['id']}' class='btn btn-dark'>Открыть смету</a></div>"
+                html += f"<div class='card'><a href='/delete_client?id={row['id']}' class='btn-del' onclick='return confirm(\"Удалить объект и все его данные?\")'>❌</a><b>👤 {row['name']}</b><p>📞 {row['phone']}<br>📍 {row['address']}</p><a href='/estimate?client_id={row['id']}' class='btn btn-dark'>Открыть смету</a></div>"
             html += "<a href='/logout' class='logout'>Выйти из аккаунта</a></div></body></html>"
+            
             self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(html.encode("utf-8"))
             
+        elif url.path == "/add_client":
+            name = q.get("name", [""])[0].strip()
+            phone = q.get("phone", [""])[0].strip()
+            address = q.get("address", [""])[0].strip()
+            if name:
+                conn, c = get_db_connection()
+                c.execute("INSERT INTO clients (user_id, name, phone, address) VALUES (?, ?, ?, ?)", (user_id, name, phone, address))
+                conn.commit()
+                conn.close()
+            self.send_response(303); self.send_header("Location", "/"); self.end_headers()
+
+        elif url.path == "/delete_client":
+            cid = q.get("id", [""])[0]
+            if cid:
+                conn, c = get_db_connection()
+                # Проверка прав собственности перед удалением
+                c.execute("DELETE FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
+                conn.commit()
+                conn.close()
+            self.send_response(303); self.send_header("Location", "/"); self.end_headers()
+
         elif url.path == "/estimate":
             try:
-                cid_list = q.get("client_id", [None])
-                cid = cid_list[0] if cid_list else None
+                cid = q.get("client_id", [""])[0]
                 if not cid: raise ValueError
+                cid = int(cid)
             except:
                 self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
 
-            conn, c_db = get_db_connection()
-            c_db.execute("SELECT id, name, phone, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
-            c = c_db.fetchone()
-            if not c:
-                conn.close(); self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
-                
-            c_db.execute("SELECT id, status FROM orders WHERE client_id = ?", (cid,))
-            o = c_db.fetchone()
-            
-            if not o:
-                c_db.execute("INSERT INTO orders (client_id, description, status) VALUES (?, 'Заказ', 'Новая')", (cid,))
-                conn.commit()
-                c_db.execute("SELECT id, status FROM orders WHERE client_id = ?", (cid,))
-                o = c_db.fetchone()
-                
-            c_db.execute("SELECT id, name, quantity, price FROM materials WHERE order_id = ?", (o['id'],))
-            mats = c_db.fetchall()
-            conn.close()
-            
-            tot = sum(m['quantity']*m['price'] for m in mats)
-            m_html = "".join([f"<div style='background:#F5F5F7;padding:10px;border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;'><div><b>{m['name']}</b><br><small>{m['quantity']} × {m['price']} р.</small></div><b>{m['quantity']*m['price']:.2f} р. <a href='/delete_material?id={m['id']}&client_id={cid}'>❌</a></b></div>" for m in mats])
-            sts = ["Новая", "В работе", "Готово", "Оплачено"]
+            conn, c = get_db_connection()
+            # Проверяем, принадлежит ли клиент текущему авторизованному мастеру
+            c.execute("SELECT id, name, address FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
+            client = c.fetchone()
+            if not client:
+                conn.close()
+                self.send_response(303); self.send_header("Location", "/"); self.end_headers(); return
+
+            # Получаем или создаем связанный заказ (order) для хранения материалов
+            c.execute("SELECT id FROM orders WHERE client_id = ?", (cid,))
+            order = c.fetchone()
+            if not order:
